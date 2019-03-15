@@ -1,12 +1,16 @@
 var express = require('express');
 var router = express.Router();
-const { mqtt } = require('../config/env');
+const {
+  connect
+} = require('mqtt')
+const {
+  mqtt
+} = require('../config/env');
 const client = connect(
   mqtt.url,
   mqtt.options
 );
-const Sensor = require('../models/sensor');
-const debug = require('debug')('lpg:index.js');
+const debug = require('debug')('fuel-mon:index.js');
 client.once('connect', () => {
   debug('MQTT client connected.');
   client.subscribe(mqtt.channel, (err, granted) => {
@@ -16,8 +20,10 @@ client.once('connect', () => {
 });
 
 /* GET home page. */
-router.get('/', function(req, res, next) {
-  res.render('index', { title: 'Express' });
+router.get('/', function (req, res, next) {
+  res.render('index', {
+    title: 'Express'
+  });
 });
 
 
@@ -46,6 +52,43 @@ router.get('/stream', (req, res) => {
     clearTimeout(timer);
   });
 });
+
+
+router.get('/', function (req, res, next) {
+  res.render('index', {
+    title: 'Express'
+  });
+});
+router.get('/ping', function (req, res, next) {
+  res.send('PONG');
+});
+
+router.get('/logs', function (req, res, nex) {
+  Sensor.findOne({}, {
+    logs: {
+      $slice: -20
+    }
+  }).exec((err, result) => {
+    if (err) return debug(err);
+    res.render('table', {
+      title: 'Raw Data',
+      result: result
+    });
+  });
+});
+router.get('/update', (req, res, next) => {
+  let query = req.query;
+  query.time_stamp = new Date();
+
+  client.publish(req.query.channel, JSON.stringify(query), err => {
+    if (err) {
+      debug(err);
+      return res.status(500).send(err.message);
+    }
+    return res.status(204).send('OK')
+  });
+});
+
 
 
 module.exports = router;
