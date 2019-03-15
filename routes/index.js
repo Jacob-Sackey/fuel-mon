@@ -11,8 +11,10 @@ const client = connect(
   mqtt.options
 );
 const debug = require('debug')('fuel-mon:index.js');
+
 client.once('connect', () => {
   debug('MQTT client connected.');
+
   client.subscribe(mqtt.channel, (err, granted) => {
     if (err) return debug(err);
     debug(`Connected to ${granted[0].topic}`);
