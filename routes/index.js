@@ -1,5 +1,7 @@
 var express = require('express');
 var router = express.Router();
+let i = 20000;
+const moment = require('moment');
 const {
   connect
 } = require('mqtt')
@@ -10,6 +12,8 @@ const client = connect(
   mqtt.url,
   mqtt.options
 );
+const async = require('async');
+const Sensor = require('../models/sensor');
 const debug = require('debug')('fuel-mon:index.js');
 
 client.once('connect', () => {
@@ -28,6 +32,9 @@ router.get('/', function (req, res, next) {
   });
 });
 
+router.get('/ping', function (req, res, next) {
+  res.send('PONG');
+});
 
 router.get('/stream', (req, res) => {
   req.socket.setTimeout(Number.MAX_SAFE_INTEGER);
@@ -45,9 +52,69 @@ router.get('/stream', (req, res) => {
   }, 18000);
 
   // When the data arrives, send it in the form
-  client.on('message', (topic, message) => {
-    // if (topic == process.env.MQTT_CHANNEL)
-    res.write('data:' + message + '\n\n');
+  client.on('message', function (topic, message) {
+    if (topic.toString() == 'errors') {
+      return debug(topic);
+    }
+    let jSage;
+    try {
+      jSage = JSON.parse(message);
+    } catch (error) {
+      return debug(error.message);
+    }
+    let device_serial_number = jSage._srn;
+    let devBuf = Buffer.from(device_serial_number, 'base64');
+    let deviceHash;
+    waterfall(
+      [
+        cb => {
+          try {
+            deviceHash = hash(devBuf).toString('base64');
+          } catch (error) {
+            debug(error);
+            return cb(error);
+          }
+          Devices.findOneAndUpdate({
+              serial_no: deviceHash
+            }, {
+              $set: {
+                'status.last_online': new Date()
+              }
+            },
+            function (err, device) {
+              if (err) return cb(err);
+              cb(null, true);
+            }
+          );
+        },
+        (pstat, cb) => {
+          Farm.findByIdAndUpdate(topic, {
+            $push: {
+              log: {
+                $each: [{
+                  humidity: jSage.humidity,
+                  temperature: jSage.temperature,
+                  moisture: jSage.moisture
+                }]
+              }
+            }
+          }).exec(err => {
+            if (err) {
+              return cb(err);
+            }
+            return cb(null, true);
+          });
+        }
+      ],
+      (err, result) => {
+        if (err) return debug('error updating device');
+        debug(`Successfully updated: ${topic}`);
+      }
+    );
+  });
+
+  client.on('error', function (err) {
+    debug(err);
   });
 
   req.on('close', () => {

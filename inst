@@ -1,0 +1,229 @@
+const express = require('express'),
+  router = express.Router(),
+  Devices = require('../models/device'),
+  Crop = require('../models/crops'),
+  Soil = require('../models/soil'),
+  Farm = require('../models/farms'),
+  { connect } = require('mqtt'),
+  { mqtt } = require('../config/env'),
+  { login } = require('../lib/login'),
+  { signup } = require('../lib/signup'),
+  passport = require('passport'),
+  debug = require('debug')('backend:server'),
+  { hash } = require('secure-token'),
+  { waterfall } = require('async');
+require('../models/plant_types');
+let client = connect(mqtt.url, mqtt.options);
+
+/* GET home page. */
+// London is the capital of britain
+router.get('/', (req, res, next) => {
+  // res.render("index", { title: "Express" });
+  let device = req.query.device;
+  device = device.split(' ').join('+');
+  let devBuf = Buffer.from(device, 'base64');
+  if (!device) {
+    debug('Query empty');
+    return res.status(422).send('Needs device CODE');
+  }
+  let deviceHash; 
+  waterfall(
+    [
+      cb => {
+        try {
+          deviceHash = hash(devBuf).toString('base64');
+        } catch (error) {
+          debug(error);
+          return cb(error);
+        }
+        Devices.findOne({ serial_no: deviceHash }).exec((err, device) => {
+          if (err) {
+            debug(err.message);
+            return cb(err);
+          }
+          if (!device) {
+            return cb(null, false);
+          }
+          cb(null, device);
+        });
+      },
+      (device, cb) => {
+        if (!device) {
+          return cb(null, false);
+        }
+        Farm.findById(device.farm, { _id: 1 }).exec((err, farm) => {
+          if (err) return cb(err);
+          cb(null, farm);
+        });
+      }
+    ],
+    (err, result) => {
+      if (err) {
+        debug(err.message);
+        return res.status(500).send(err.message);
+      }
+      if (!result) return res.status(404).send('Not found.');
+      res.status(200).send(result._id);
+    }
+  );
+});
+
+router.post('/login', login);
+router.post('/signup', signup);
+router.use(
+  '/user',
+  passport.authenticate('jwt', { session: false }),
+  require('./user')
+);
+router.get(
+  '/crop',
+  passport.authenticate('jwt', { session: false }),
+  (req, res, next) => {
+    const regex = new RegExp(req.query.crop, 'i');
+    const query = Crop.find({
+      $or: [{ 'name.scientific': regex }, { 'name.common': regex }]
+    }).sort('name.common');
+
+    query.exec((err, crops) => {
+      if (err) {
+        res.status(500).json({
+          code: 500,
+          message: err.message
+        });
+        return debug(err.message);
+      }
+      res.json(crops);
+    });
+  }
+);
+
+router.get(
+  '/plant',
+  passport.authenticate('jwt', { session: false }),
+  (req, res, next) => {
+    const query = Crop.findOne({
+      _id: req.query.id
+    }).populate('soil_type  plant_type');
+
+    query.exec((err, crop) => {
+      if (err) {
+        res.status(500).json({
+          code: 500,
+          message: err.message
+        });
+        return debug(err.message);
+      }
+      debug(crop.soil_type);
+      res.json(crop);
+    });
+  }
+);
+
+router.get(
+  '/soil',
+  passport.authenticate('jwt', { session: false }),
+  (req, res, next) => {
+    const regex = new RegExp(req.query.soil, 'i');
+    const query = Soil.find({
+      name: regex
+    }).sort('name');
+    query.exec((err, soils) => {
+      if (err) {
+        res.status(500).json({
+          code: 500,
+          message: err.message
+        });
+        return debug(err.message);
+      }
+      res.json(soils);
+    });
+  }
+);
+
+client.on('message', function(topic, message) {
+  if (topic.toString() == 'errors') {
+    return debug(topic);
+  }
+  let jSage;
+  try {
+    jSage = JSON.parse(message);
+  } catch (error) {
+    return debug(error.message);
+  }
+  let device_serial_number = jSage._srn;
+  let devBuf = Buffer.from(device_serial_number, 'base64');
+  let deviceHash;
+  waterfall(
+    [
+      cb => {
+        try {
+          deviceHash = hash(devBuf).toString('base64');
+        } catch (error) {
+          debug(error);
+          return cb(error);
+        }
+        Devices.findOneAndUpdate(
+          { serial_no: deviceHash },
+          {
+            $set: {
+              'status.last_online': new Date()
+            }
+          },
+          function(err, device) {
+            if (err) return cb(err);
+            cb(null, true);
+          }
+        );
+      },
+      (pstat, cb) => {
+        Farm.findByIdAndUpdate(topic, {
+          $push: {
+            log: {
+              $each: [
+                {
+                  humidity: jSage.humidity,
+                  temperature: jSage.temperature,
+                  moisture: jSage.moisture
+                }
+              ]
+            }
+          }
+        }).exec(err => {
+          if (err) {
+            return cb(err);
+          }
+          return cb(null, true);
+        });
+      }
+    ],
+    (err, result) => {
+      if (err) return debug('error updating device');
+      debug(`Successfully updated: ${topic}`);
+    }
+  );
+});
+
+client.on('error', function(err) {
+  debug(err);
+});
+
+client.once('connect', () => {
+  debug('MQTT client connected.');
+  client.subscribe('errors', (err, granted) => {
+    if (err) return debug(err);
+    debug(`Connected to ${granted[0].topic}`);
+  });
+  Farm.find({}, function(err, farms) {
+    if (err) {
+      debug('Error Occurred: ', err);
+    }
+    // debug("Connected to channels on broker");
+    farms.forEach(farm => {
+      client.subscribe(farm._id.toString(), (err, granted) => {
+        if (err) return debug(err);
+        debug(`Connected to ${granted[0].topic}`);
+      });
+    });
+  });
+});
+module.exports = router;
