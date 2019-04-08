@@ -37,23 +37,23 @@ router.get('/ping', function (req, res, next) {
 });
 
 router.get('/stream', (req, res) => {
-  req.socket.setTimeout(Number.MAX_SAFE_INTEGER);
-  // req.socket.setTimeout((i *= 6));
+      req.socket.setTimeout(Number.MAX_SAFE_INTEGER);
+      // req.socket.setTimeout((i *= 6));
 
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive'
-  });
-  res.write('\n');
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive'
+      });
+      res.write('\n');
 
-  var timer = setInterval(() => {
-    res.write(':' + '\n');
-  }, 18000);
+      var timer = setInterval(() => {
+        res.write(':' + '\n');
+      }, 18000);
 
-  // When the data arrives, send it in the form
-  client.on('message', function (topic, message) {
-    if (topic.toString() == 'errors') {
+      // When the data arrives, send it in the form
+      client.on('message', function (topic, message) {
+        /*  if (topic.toString() == 'errors') {
       return debug(topic);
     }
     let jSage;
@@ -119,49 +119,49 @@ router.get('/stream', (req, res) => {
 
   req.on('close', () => {
     clearTimeout(timer);
-  });
-});
+  }); */
+      });
 
 
-router.get('/', function (req, res, next) {
-  res.render('index', {
-    title: 'Express'
-  });
-});
-router.get('/ping', function (req, res, next) {
-  res.send('PONG');
-});
+      router.get('/', function (req, res, next) {
+        res.render('index', {
+          title: 'Express'
+        });
+      });
+      router.get('/ping', function (req, res, next) {
+        res.send('PONG');
+      });
 
-router.get('/logs', function (req, res, nex) {
-  Sensor.findOne({}, {
-    logs: {
-      $slice: -20
-    }
-  }).exec((err, result) => {
-    if (err) return debug(err);
-    res.render('table', {
-      title: 'Raw Data',
-      result: result
-    });
-  });
-});
-router.get('/update', (req, res, next) => {
-  let query = req.query;
-  query.time_stamp = new Date();
+      router.get('/logs', function (req, res, nex) {
+        Sensor.findOne({}, {
+          logs: {
+            $slice: -20
+          }
+        }).exec((err, result) => {
+          if (err) return debug(err);
+          res.render('table', {
+            title: 'Raw Data',
+            result: result
+          });
+        });
+      });
+      router.get('/update', (req, res, next) => {
+        let query = req.query;
+        query.time_stamp = new Date();
 
-  client.publish(req.query.channel, JSON.stringify(query), err => {
-    if (err) {
-      debug(err);
-      return res.status(500).send(err.message);
-    }
-    return res.status(204).send('OK')
-  });
-});
+        client.publish(req.query.channel, JSON.stringify(query), err => {
+          if (err) {
+            debug(err);
+            return res.status(500).send(err.message);
+          }
+          return res.status(204).send('OK')
+        });
+      });
 
 
 
-module.exports = router;
-client.on('error', err => {
-  console.error(err);
-  debug(err);
-});
+      module.exports = router;
+      client.on('error', err => {
+        console.error(err);
+        debug(err);
+      });
